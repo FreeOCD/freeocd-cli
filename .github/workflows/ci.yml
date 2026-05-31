@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint - rustfmt + clippy (single x86_64 Linux runner)
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Lint (fmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libudev-dev and pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - name: rustfmt
+        id: fmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        id: clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Lint summary
+        if: always()
+        shell: bash
+        run: |
+          status() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              *) echo "$1" ;;
+            esac
+          }
+          {
+            echo "## Lint Results"
+            echo "| Check | Status |"
+            echo "|-------|--------|"
+            echo "| rustfmt | $(status ${{ steps.fmt.outcome }}) |"
+            echo "| clippy | $(status ${{ steps.clippy.outcome }}) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
+  # Test - build + test across the supported OS/arch matrix
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test (${{ matrix.runner }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest      # Linux x86_64
+          - ubuntu-24.04-arm   # Linux ARM64
+          - macos-latest       # macOS ARM64
+          - windows-latest     # Windows x86_64
+          - windows-11-arm     # Windows ARM64
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libudev-dev and pkg-config
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Build
+        id: build
+        run: cargo build --locked --all-targets --verbose
+
+      - name: Test
+        id: test
+        run: cargo test --locked --verbose
+
+      - name: Test summary
+        if: always()
+        shell: bash
+        run: |
+          status() {
+            case "$1" in
+              success) echo "✅" ;;
+              failure) echo "❌" ;;
+              *) echo "$1" ;;
+            esac
+          }
+          {
+            echo "## Test Results (${{ matrix.runner }})"
+            echo "| Step | Status |"
+            echo "|------|--------|"
+            echo "| build | $(status ${{ steps.build.outcome }}) |"
+            echo "| test | $(status ${{ steps.test.outcome }}) |"
+          } >> "$GITHUB_STEP_SUMMARY"

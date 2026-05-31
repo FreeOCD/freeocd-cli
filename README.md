@@ -1,5 +1,9 @@
 # FreeOCD-CLI
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/FreeOCD/freeocd-cli)
+[![CI](https://github.com/FreeOCD/freeocd-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/FreeOCD/freeocd-cli/actions/workflows/ci.yml)
+[![Release](https://github.com/FreeOCD/freeocd-cli/actions/workflows/release.yml/badge.svg)](https://github.com/FreeOCD/freeocd-cli/actions/workflows/release.yml)
+
 A cross-platform command-line debugger for ARM Cortex-M microcontrollers over
 CMSIS-DAP, built on [probe-rs](https://probe.rs). It is a native Rust port of
 [freeocd-web](https://github.com/FreeOCD/freeocd-web) and **reuses the exact same
