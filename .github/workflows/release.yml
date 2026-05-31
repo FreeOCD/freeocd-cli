@@ -1,0 +1,203 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Check - gate the release on fmt + clippy + tests before building artifacts
+  # ---------------------------------------------------------------------------
+  check:
+    name: Check (fmt + clippy + test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libudev-dev and pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - name: rustfmt
+        run: cargo fmt --all --check
+
+      - name: clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --locked
+
+  # ---------------------------------------------------------------------------
+  # Build - native per-target binaries packaged in each OS's standard archive
+  # format (Linux: tar.gz, macOS/Windows: zip). All targets build natively to
+  # avoid cross-compiling the hidapi/libudev C dependencies.
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+          - runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install libudev-dev and pkg-config
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
+
+      - name: Build
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package (Linux, tar.gz)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          stage="freeocd-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$stage"
+          cp "target/${{ matrix.target }}/release/freeocd" "$stage/"
+          cp LICENSE README.md "$stage/"
+          tar -czf "${stage}.tar.gz" "$stage"
+
+      - name: Package (macOS, zip)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          stage="freeocd-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$stage"
+          cp "target/${{ matrix.target }}/release/freeocd" "$stage/"
+          cp LICENSE README.md "$stage/"
+          zip -r -X -9 "${stage}.zip" "$stage"
+
+      - name: Package (Windows, zip)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $stage = "freeocd-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/freeocd.exe" -Destination $stage
+          Copy-Item LICENSE, README.md -Destination $stage
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+
+      - name: Verify archive
+        shell: bash
+        run: |
+          shopt -s nullglob
+          produced=0
+          for f in freeocd-*.tar.gz freeocd-*.zip; do
+            size=$(wc -c < "$f")
+            if [ "$size" -lt 1024 ]; then
+              echo "::error::$f is suspiciously small (${size} bytes)"
+              exit 1
+            fi
+            echo "✓ $f (${size} bytes)"
+            produced=1
+          done
+          if [ "$produced" -ne 1 ]; then
+            echo "::error::no release archive was produced"
+            exit 1
+          fi
+          {
+            echo "## Build (${{ matrix.target }})"
+            for f in freeocd-*.tar.gz freeocd-*.zip; do
+              echo "- \`$f\` ($(wc -c < "$f") bytes)"
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: freeocd-${{ matrix.target }}
+          path: |
+            freeocd-*.tar.gz
+            freeocd-*.zip
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # Publish - aggregate checksums and create the GitHub Release
+  # (least-privilege: contents:write only here).
+  # ---------------------------------------------------------------------------
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: |
+          sha256sum freeocd-* > checksums-sha256.txt
+          cat checksums-sha256.txt
+
+      - name: List release files
+        run: ls -la dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/freeocd-*.tar.gz
+            dist/freeocd-*.zip
+            dist/checksums-sha256.txt
+
+      - name: Release summary
+        if: always()
+        run: |
+          echo "## Release ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "### SHA-256 Checksums" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat dist/checksums-sha256.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
