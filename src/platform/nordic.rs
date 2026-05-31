@@ -318,7 +318,8 @@ impl PlatformHandler for NordicHandler {
     }
 
     /// Enable the flash controller, then stream the image to flash as
-    /// little-endian 32-bit words.
+    /// little-endian 32-bit words, finishing with a read-back that flushes the
+    /// controller's write buffer so the final word is committed.
     fn flash(
         &self,
         iface: &mut dyn ArmDebugInterface,
@@ -354,6 +355,23 @@ impl PlatformHandler for NordicHandler {
                 .with_context(|| format!("Flash write failed at 0x{addr:08X}"))?;
             written += chunk.len();
             progress((written as f64 / total as f64) * 100.0);
+        }
+
+        // Flush the flash controller's write buffer. The nRF54L RRAM holds the
+        // most recently written word(s) in a small buffer and only commits them
+        // to non-volatile storage on a coherency event; a MEM-AP read of the
+        // RRAM forces that commit, whereas the peripheral-register writes used to
+        // program it do not. Reading the tail of the freshly written region back
+        // guarantees the final word is committed before the device is reset.
+        // Without it the last word is silently lost (a `--verify` pass hides the
+        // bug because reading the whole image back performs the same flush).
+        let flush_words = total.min(WORD_CHUNK);
+        if flush_words > 0 {
+            let tail_addr = firmware.start_address + ((total - flush_words) as u64) * 4;
+            let mut scratch = vec![0u32; flush_words];
+            if let Err(err) = mem.read_32(tail_addr, &mut scratch) {
+                tracing::warn!("Flash flush read-back failed at 0x{tail_addr:08X}: {err}");
+            }
         }
 
         tracing::info!("Firmware write completed!");
