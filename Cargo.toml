@@ -1,0 +1,53 @@
+[package]
+name = "freeocd-cli"
+version = "0.1.0"
+edition = "2021"
+description = "FreeOCD CLI - flash, recover, verify and RTT-debug ARM Cortex-M microcontrollers via CMSIS-DAP"
+# BSD-3-Clause overall; src/dapjs/rtt.rs is a port of MIT-licensed dapjs code
+# (see src/dapjs/LICENSE), so the combined package license is the conjunction.
+license = "BSD-3-Clause AND MIT"
+repository = "https://github.com/FreeOCD/freeocd-cli"
+readme = "README.md"
+
+[[bin]]
+name = "freeocd"
+path = "src/main.rs"
+
+[dependencies]
+# Debug probe access (probe enumeration, CMSIS-DAP, low-level ARM DAP access).
+# probe-rs uses nusb internally for its USB backend; cmsisdap_v1 enables HID (v1)
+# probes in addition to the always-available v2 (bulk) backend. builtin-targets /
+# builtin-formats are intentionally disabled: this CLI drives flashing from the
+# shared freeocd-web target JSON via the low-level ARM interface, not probe-rs's
+# built-in target database or image loaders.
+probe-rs = { version = "0.31", default-features = false, features = ["cmsisdap_v1"] }
+
+# CLI argument parsing.
+clap = { version = "4", features = ["derive"] }
+
+# Target definition / probe filter (de)serialization.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Compile-time embedding of the shared freeocd-web target definitions. build.rs
+# copies the `targets` directory into OUT_DIR and it is baked into the binary
+# via include_dir! (see build.rs and src/targets/mod.rs).
+include_dir = "0.7"
+
+# Intel HEX firmware parsing.
+ihex = "3"
+
+# Progress reporting and logging.
+indicatif = "0.17"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Error handling.
+anyhow = "1"
+thiserror = "2"
+
+# Graceful Ctrl-C handling for the RTT terminal loop.
+ctrlc = "3"
+
+[profile.release]
+strip = true
