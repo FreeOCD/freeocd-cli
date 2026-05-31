@@ -156,11 +156,7 @@ impl Rtt {
         let read_off = mem.read_word_32(buf.descriptor_addr + 16)?;
         let mut write_off = mem.read_word_32(buf.descriptor_addr + 12)?;
 
-        let available = if write_off >= read_off {
-            buf.size - (write_off - read_off)
-        } else {
-            read_off - write_off - 1
-        };
+        let available = ring_free_space(buf.size, write_off, read_off);
         if (available as usize) < data.len() {
             return Ok(0);
         }
@@ -207,6 +203,21 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
+/// Bytes that can be written to a SEGGER RTT ring buffer of `size` bytes given
+/// the current write/read offsets.
+///
+/// One slot is always left unused so that a full buffer (`free == 0`) stays
+/// distinguishable from an empty one (`write_off == read_off`). Writing more
+/// than this would wrap `write_off` onto `read_off`, which the target reads as
+/// an empty buffer, silently discarding the data.
+fn ring_free_space(size: u32, write_off: u32, read_off: u32) -> u32 {
+    if write_off >= read_off {
+        size - 1 - (write_off - read_off)
+    } else {
+        read_off - write_off - 1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,5 +229,21 @@ mod tests {
         data[40..50].copy_from_slice(b"SEGGER RTT");
         assert_eq!(find_subslice(&data, b"SEGGER RTT"), Some(40));
         assert_eq!(find_subslice(&data, b"NOPE"), None);
+    }
+
+    /// The ring buffer always reserves one slot, so a `size`-byte buffer holds
+    /// at most `size - 1` bytes and an empty buffer never reports `size` free.
+    #[test]
+    fn ring_free_space_reserves_one_slot() {
+        // Empty buffer (write_off == read_off): all but one slot is free.
+        assert_eq!(ring_free_space(16, 0, 0), 15);
+        assert_eq!(ring_free_space(16, 8, 8), 15);
+        // Write ahead of read (no wrap).
+        assert_eq!(ring_free_space(16, 10, 4), 9);
+        // Read ahead of write (wrapped).
+        assert_eq!(ring_free_space(16, 4, 10), 5);
+        // One slot before the read offset stays reserved (buffer full).
+        assert_eq!(ring_free_space(16, 7, 8), 0);
+        assert_eq!(ring_free_space(16, 15, 0), 0);
     }
 }
