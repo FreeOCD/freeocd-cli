@@ -1,0 +1,3 @@
+[submodule "vendor/freeocd-web"]
+	path = vendor/freeocd-web
+	url = https://github.com/FreeOCD/freeocd-web
