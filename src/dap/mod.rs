@@ -10,6 +10,7 @@
 //! in here without changing the platform/flash/RTT layers.
 
 pub mod arm;
+pub mod io;
 
 use anyhow::{anyhow, bail, Context, Result};
 use probe_rs::architecture::arm::{sequences::DefaultArmSequence, ArmDebugInterface};
@@ -29,12 +30,17 @@ pub fn list_probes() -> Vec<DebugProbeInfo> {
     Lister::new().list_all()
 }
 
+/// Open a probe and return a [`io::ProbeRsIo`] over its ARM debug interface.
+pub fn open_io(opts: &ProbeOptions) -> Result<io::ProbeRsIo> {
+    Ok(io::ProbeRsIo::new(open_interface(opts)?))
+}
+
 /// Open a probe and initialize the ARM debug interface (SWD).
 ///
 /// Uses [`DefaultArmSequence`], which brings up the debug port without needing
 /// a chip-specific target definition. This is sufficient to reach the Nordic
 /// CTRL-AP (for recovery) and the MEM-AP (for flashing / RTT).
-pub fn open_interface(opts: &ProbeOptions) -> Result<Box<dyn ArmDebugInterface>> {
+fn open_interface(opts: &ProbeOptions) -> Result<Box<dyn ArmDebugInterface>> {
     let lister = Lister::new();
 
     let selector: DebugProbeSelector = match &opts.selector {

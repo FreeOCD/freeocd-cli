@@ -15,6 +15,7 @@ mod logging;
 mod ops;
 mod platform;
 mod targets;
+mod util;
 
 use clap::{CommandFactory, Parser};
 

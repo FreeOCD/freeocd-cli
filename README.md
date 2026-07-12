@@ -140,9 +140,9 @@ cli.rs / main.rs        Command-line interface (clap) + entry point
    |
 ops.rs                  Orchestration of each subcommand + progress reporting
    |
-platform/               PlatformHandler trait + nordic.rs (recover/flash/verify/reset)
+platform/               PlatformHandler trait + nordic/ (recover/flash/verify/reset)
    |
-dap/                    probe-rs probe access; CTRL-AP / MEM-AP (arm.rs) helpers
+dap/                    probe-rs probe access; DapIo abstraction (io.rs); CTRL-AP helpers (arm.rs)
    |
 dapjs/rtt.rs            SEGGER RTT control-block scan and buffer I/O (MIT, dapjs-derived)
 
@@ -156,11 +156,12 @@ logging.rs              tracing-subscriber setup
 - **`ops.rs`** — orchestrates each subcommand end to end and drives the
   percentage progress bars.
 - **`platform/`** — `PlatformHandler` is the abstract contract
-  (`recover`/`flash`/`verify`/`reset`); `nordic.rs` implements it for the Nordic
+  (`recover`/`flash`/`verify`/`reset`); `nordic/` implements it for the Nordic
   CTRL-AP and RRAMC/NVMC flash controllers.
 - **`dap/`** — the only module that knows how a probe is enumerated, selected and
-  opened. Everything above it works against probe-rs's `ArmDebugInterface`, so a
-  new transport can be added here without touching the upper layers.
+  opened. Everything above it works against the narrow `DapIo` trait (`io.rs`),
+  so a new transport can be added here without touching the upper layers, and
+  the platform handlers can be unit-tested against a mock.
 - **`dapjs/rtt.rs`** — SEGGER RTT control-block scanning and up/down buffer I/O,
   ported from the MIT-licensed dapjs RTT example.
 - **`targets/`** — loads the embedded JSON target definitions and the central
@@ -224,16 +225,21 @@ src/
 ├── ops.rs            # Subcommand orchestration + progress bars
 ├── hex.rs            # Intel HEX parser
 ├── logging.rs        # tracing-subscriber setup
+├── util.rs           # Shared parsing helpers
 ├── dap/              # probe-rs probe access
 │   ├── mod.rs        #   enumeration / selection / open
-│   └── arm.rs        #   CTRL-AP / MEM-AP helpers
+│   ├── io.rs         #   DapIo abstraction + probe-rs adapter
+│   └── arm.rs        #   CTRL-AP register helpers with selective retry
 ├── dapjs/            # SEGGER RTT (MIT, dapjs-derived)
 │   ├── mod.rs
 │   ├── rtt.rs        #   control-block scan + buffer I/O
 │   └── LICENSE       #   bundled dapjs MIT license
 ├── platform/         # Platform handlers
 │   ├── mod.rs        #   PlatformHandler trait + registry
-│   └── nordic.rs     #   Nordic CTRL-AP + RRAMC implementation
+│   └── nordic/       #   Nordic implementation
+│       ├── mod.rs    #     CTRL-AP recovery / reset state machines
+│       ├── flash.rs  #     RRAMC/NVMC flash programming + verify
+│       └── tests.rs  #     Mock-based unit tests
 └── targets/          # Embedded target definitions
     ├── mod.rs        #   include_dir! asset loading
     ├── definition.rs #   TargetConfig schema

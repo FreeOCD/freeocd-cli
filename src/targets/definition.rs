@@ -86,13 +86,25 @@ pub struct EraseAllStatus {
     pub error: u32,
 }
 
+/// Flash controller kind. Unrecognized values deserialize to [`Self::Unknown`]
+/// so target listing still works; operations that need the controller fail
+/// with a clear error instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FlashControllerKind {
+    Rramc,
+    Nvmc,
+    #[serde(other)]
+    Unknown,
+}
+
 /// Flash controller description (RRAMC for nRF54, NVMC for nRF52).
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FlashController {
     /// Controller type: `"rramc"` or `"nvmc"`.
     #[serde(rename = "type")]
-    pub kind: String,
+    pub kind: FlashControllerKind,
     /// Controller register base address.
     #[serde(deserialize_with = "de_int")]
     pub base: u64,
@@ -185,22 +197,11 @@ where
 /// decimal / hex string.
 fn value_to_u64(value: &serde_json::Value) -> Result<u64, String> {
     match value {
-        serde_json::Value::String(s) => parse_int_str(s),
+        serde_json::Value::String(s) => crate::util::parse_u64_maybe_hex(s),
         serde_json::Value::Number(n) => n
             .as_u64()
             .ok_or_else(|| format!("expected an unsigned integer, got {n}")),
         other => Err(format!("expected string or number, got {other}")),
-    }
-}
-
-/// Parse an integer from a decimal or `0x`-prefixed hex string.
-fn parse_int_str(s: &str) -> Result<u64, String> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).map_err(|e| format!("invalid hex '{s}': {e}"))
-    } else {
-        s.parse::<u64>()
-            .map_err(|e| format!("invalid integer '{s}': {e}"))
     }
 }
 
@@ -241,7 +242,7 @@ mod tests {
         assert_eq!(ctrl.idr, 0x3288_0000);
 
         let fc = cfg.flash_controller.as_ref().unwrap();
-        assert_eq!(fc.kind, "rramc");
+        assert_eq!(fc.kind, FlashControllerKind::Rramc);
         assert_eq!(fc.base, 0x5004_B000);
         let regs = fc.registers.as_ref().unwrap();
         assert_eq!(regs.config.offset, 0x500);

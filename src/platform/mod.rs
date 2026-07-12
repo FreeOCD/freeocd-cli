@@ -5,13 +5,14 @@
 //!
 //! Each platform (Nordic, future: STM32, RP2040, ...) implements
 //! [`PlatformHandler`] to provide recover / flash / verify / reset on top of
-//! probe-rs's low-level ARM debug interface.
+//! the narrow [`DapIo`] debug I/O abstraction, which keeps the handlers
+//! transport-agnostic and unit-testable.
 
 pub mod nordic;
 
 use anyhow::{bail, Result};
-use probe_rs::architecture::arm::ArmDebugInterface;
 
+use crate::dap::io::DapIo;
 use crate::hex::Firmware;
 use crate::targets::TargetConfig;
 
@@ -28,12 +29,12 @@ pub struct VerifyOutcome {
 /// Contract implemented by every platform handler.
 pub trait PlatformHandler {
     /// Recover (unlock / mass erase) the device into a known, accessible state.
-    fn recover(&self, iface: &mut dyn ArmDebugInterface, progress: &mut ProgressFn) -> Result<()>;
+    fn recover(&self, io: &mut dyn DapIo, progress: &mut ProgressFn) -> Result<()>;
 
     /// Write firmware to the device's flash.
     fn flash(
         &self,
-        iface: &mut dyn ArmDebugInterface,
+        io: &mut dyn DapIo,
         firmware: &Firmware,
         progress: &mut ProgressFn,
     ) -> Result<()>;
@@ -41,13 +42,14 @@ pub trait PlatformHandler {
     /// Read back and compare firmware against the expected image.
     fn verify(
         &self,
-        iface: &mut dyn ArmDebugInterface,
+        io: &mut dyn DapIo,
         firmware: &Firmware,
         progress: &mut ProgressFn,
     ) -> Result<VerifyOutcome>;
 
-    /// Reset the target device.
-    fn reset(&self, iface: &mut dyn ArmDebugInterface) -> Result<()>;
+    /// Reset the target device (best effort; errors are propagated so the
+    /// caller can decide whether they are fatal).
+    fn reset(&self, io: &mut dyn DapIo) -> Result<()>;
 }
 
 /// Instantiate the platform handler for a target definition.

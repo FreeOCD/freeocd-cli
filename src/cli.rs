@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::dap::ProbeOptions;
+use crate::util::parse_u64_maybe_hex;
 
 /// FreeOCD CLI: flash, recover, verify and RTT-debug ARM Cortex-M MCUs via CMSIS-DAP.
 #[derive(Parser, Debug)]
@@ -61,12 +62,12 @@ impl ProbeArgs {
     }
 }
 
-/// Arguments for commands that only need a target and a probe.
+/// Target and probe selection shared by every target-directed command.
 #[derive(Args, Debug)]
 pub struct TargetArgs {
     /// Target id, e.g. "nordic/nrf54/nrf54l15".
-    #[arg(short, long)]
-    pub target: String,
+    #[arg(short = 't', long = "target")]
+    pub id: String,
 
     #[command(flatten)]
     pub probe: ProbeArgs,
@@ -75,9 +76,8 @@ pub struct TargetArgs {
 /// Arguments for the `flash` command.
 #[derive(Args, Debug)]
 pub struct FlashArgs {
-    /// Target id, e.g. "nordic/nrf54/nrf54l15".
-    #[arg(short, long)]
-    pub target: String,
+    #[command(flatten)]
+    pub target: TargetArgs,
 
     /// Path to the firmware `.hex` file.
     #[arg(short, long)]
@@ -86,32 +86,24 @@ pub struct FlashArgs {
     /// Verify the firmware after flashing.
     #[arg(long)]
     pub verify: bool,
-
-    #[command(flatten)]
-    pub probe: ProbeArgs,
 }
 
 /// Arguments for the `verify` command.
 #[derive(Args, Debug)]
 pub struct VerifyArgs {
-    /// Target id, e.g. "nordic/nrf54/nrf54l15".
-    #[arg(short, long)]
-    pub target: String,
+    #[command(flatten)]
+    pub target: TargetArgs,
 
     /// Path to the firmware `.hex` file.
     #[arg(short, long)]
     pub file: PathBuf,
-
-    #[command(flatten)]
-    pub probe: ProbeArgs,
 }
 
 /// Arguments for the `rtt` command.
 #[derive(Args, Debug)]
 pub struct RttArgs {
-    /// Target id, e.g. "nordic/nrf54/nrf54l15".
-    #[arg(short, long)]
-    pub target: String,
+    #[command(flatten)]
+    pub target: TargetArgs,
 
     /// RTT scan start address (default: target SRAM base or 0x20000000).
     #[arg(long, value_parser = parse_u64_maybe_hex)]
@@ -128,17 +120,4 @@ pub struct RttArgs {
     /// Reset the target before attaching RTT.
     #[arg(long)]
     pub reset: bool,
-
-    #[command(flatten)]
-    pub probe: ProbeArgs,
-}
-
-/// Parse a `u64` from a decimal or `0x`-prefixed hex string.
-fn parse_u64_maybe_hex(s: &str) -> Result<u64, String> {
-    let s = s.trim();
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        u64::from_str_radix(hex, 16).map_err(|e| e.to_string())
-    } else {
-        s.parse::<u64>().map_err(|e| e.to_string())
-    }
 }

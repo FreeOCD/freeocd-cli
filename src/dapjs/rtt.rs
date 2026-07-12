@@ -31,12 +31,17 @@ pub struct RttConfig {
 
 impl Default for RttConfig {
     /// Defaults targeting the common Cortex-M SRAM window (0x2000_0000, 64 KiB).
+    ///
+    /// The stride overlaps consecutive windows by just under the signature
+    /// length, so a control block straddling a window boundary is still found
+    /// while nearly every byte is read only once.
     fn default() -> Self {
+        let scan_block = 0x1000u64; // 4 KiB
         Self {
             scan_start: 0x2000_0000,
             scan_range: 0x1_0000, // 64 KiB
-            scan_block: 0x1000,   // 4 KiB
-            scan_stride: 0x0800,  // 2 KiB
+            scan_block,
+            scan_stride: scan_block - (RTT_SIGNATURE.len() as u64 - 1),
         }
     }
 }
@@ -152,6 +157,9 @@ impl Rtt {
         let Some(buf) = self.down.get(channel) else {
             bail!("RTT down-buffer {channel} does not exist");
         };
+        if data.is_empty() {
+            return Ok(0);
+        }
 
         let read_off = mem.read_word_32(buf.descriptor_addr + 16)?;
         let mut write_off = mem.read_word_32(buf.descriptor_addr + 12)?;
@@ -161,24 +169,26 @@ impl Rtt {
             return Ok(0);
         }
 
+        // The ring wraps at most once for a payload that fits, so the write
+        // splits into at most two contiguous bulk transfers.
         let buffer_ptr = u64::from(buf.buffer_ptr);
-        for &byte in data {
-            mem.write_8(buffer_ptr + u64::from(write_off), &[byte])?;
-            write_off += 1;
-            if write_off == buf.size {
-                write_off = 0;
-            }
+        let until_wrap = (buf.size - write_off) as usize;
+        let (head, tail) = data.split_at(data.len().min(until_wrap));
+        mem.write_8(buffer_ptr + u64::from(write_off), head)?;
+        if !tail.is_empty() {
+            mem.write_8(buffer_ptr, tail)?;
         }
+        write_off = (write_off + data.len() as u32) % buf.size;
         mem.write_word_32(buf.descriptor_addr + 12, write_off)?;
         Ok(data.len())
     }
 
     /// Scan target memory for the RTT control block signature.
     fn find_control_block(mem: &mut dyn ArmMemoryInterface, config: &RttConfig) -> Result<u64> {
+        let mut block = vec![0u8; config.scan_block as usize];
         let mut offset = 0u64;
         while offset < config.scan_range {
             let addr = config.scan_start + offset;
-            let mut block = vec![0u8; config.scan_block as usize];
             match mem.read_8(addr, &mut block) {
                 Ok(()) => {
                     if let Some(index) = find_subslice(&block, RTT_SIGNATURE) {
