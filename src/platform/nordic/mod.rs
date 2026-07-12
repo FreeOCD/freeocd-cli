@@ -196,6 +196,9 @@ impl NordicHandler {
         is_retry: bool,
     ) -> Result<bool> {
         let ap = self.ctrl_ap()?.num;
+        // Validate the status mapping up front so a missing definition surfaces
+        // as a configuration error rather than a polling timeout.
+        self.erase_status()?;
         let prefix = if is_retry { "[Retry] " } else { "" };
 
         tracing::info!("{prefix}Resetting ERASEALL task...");
