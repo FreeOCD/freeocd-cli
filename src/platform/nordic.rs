@@ -341,8 +341,10 @@ impl PlatformHandler for NordicHandler {
             padded.push(0xFF);
         }
         let words: Vec<u32> = padded
-            .chunks_exact(4)
-            .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|&c| u32::from_le_bytes(c))
             .collect();
         let total = words.len();
 
