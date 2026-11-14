@@ -24,7 +24,7 @@ jobs:
     name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -82,7 +82,7 @@ jobs:
           - windows-11-arm     # Windows ARM64
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
