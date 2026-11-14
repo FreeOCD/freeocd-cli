@@ -20,7 +20,7 @@ path = "src/main.rs"
 # builtin-formats are intentionally disabled: this CLI drives flashing from the
 # shared freeocd-web target JSON via the low-level ARM interface, not probe-rs's
 # built-in target database or image loaders.
-probe-rs = { version = "0.31", default-features = false, features = ["cmsisdap_v1"] }
+probe-rs = { version = "0.32", default-features = false, features = ["cmsisdap_v1"] }
 
 # CLI argument parsing.
 clap = { version = "4", features = ["derive"] }
@@ -38,7 +38,7 @@ include_dir = "0.7"
 ihex = "3"
 
 # Progress reporting and logging.
-indicatif = "0.17"
+indicatif = "0.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
