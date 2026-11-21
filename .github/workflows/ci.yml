@@ -78,6 +78,7 @@ jobs:
           - ubuntu-latest      # Linux x86_64
           - ubuntu-24.04-arm   # Linux ARM64
           - macos-latest       # macOS ARM64
+          - macos-26-intel     # macOS x86_64 — same runner release.yml ships on
           - windows-latest     # Windows x86_64
           - windows-11-arm     # Windows ARM64
 
