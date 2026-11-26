@@ -202,6 +202,51 @@ jobs:
           Copy-Item src/dapjs/LICENSE -Destination "$stage/licenses/DAPjs-LICENSE.txt"
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
 
+      - name: Smoke-test archive
+        shell: bash
+        env:
+          RELEASE_LABEL: ${{ needs.validate.outputs.label }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          stage="freeocd-${RELEASE_LABEL}-${TARGET}"
+          rm -rf smoke && mkdir smoke
+          exe=freeocd
+          case "$RUNNER_OS" in
+            Linux) tar -xzf "${stage}.tar.gz" -C smoke ;;
+            macOS) unzip -q "${stage}.zip" -d smoke ;;
+            Windows)
+              pwsh -NoProfile -Command "Expand-Archive -Path '${stage}.zip' -DestinationPath smoke"
+              exe=freeocd.exe
+              ;;
+          esac
+          dir="smoke/$stage"
+          for f in "$exe" LICENSE README.md licenses/DAPjs-LICENSE.txt; do
+            if [ ! -f "$dir/$f" ]; then
+              echo "::error::$stage archive is missing $f"
+              exit 1
+            fi
+          done
+          version="${RELEASE_LABEL#v}"
+          version="${version%-dryrun}"
+          actual=$("$dir/$exe" --version)
+          if [ "$actual" != "freeocd $version" ]; then
+            echo "::error::$exe --version printed '$actual', expected 'freeocd $version'"
+            exit 1
+          fi
+          "$dir/$exe" list | tee smoke/list.txt
+          ids=$(grep -oE '"[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+"' vendor/freeocd-web/public/targets/index.json | tr -d '"')
+          if [ -z "$ids" ]; then
+            echo "::error::no target ids found in vendor/freeocd-web/public/targets/index.json"
+            exit 1
+          fi
+          for id in $ids; do
+            if ! grep -qF "$id" smoke/list.txt; then
+              echo "::error::$exe list does not show embedded target $id"
+              exit 1
+            fi
+          done
+          echo "✓ $stage: --version, list and bundled licenses OK"
+
       - name: Verify archive
         shell: bash
         run: |
