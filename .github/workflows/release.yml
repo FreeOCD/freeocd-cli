@@ -240,7 +240,7 @@ jobs:
             exit 1
           fi
           for id in $ids; do
-            if ! grep -qF "$id" smoke/list.txt; then
+            if ! awk -v id="$id" 'index($0, "  " id " — ") == 1 { found = 1 } END { exit !found }' smoke/list.txt; then
               echo "::error::$exe list does not show embedded target $id"
               exit 1
             fi
