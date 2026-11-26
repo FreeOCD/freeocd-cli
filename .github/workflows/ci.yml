@@ -22,18 +22,20 @@ jobs:
   # ---------------------------------------------------------------------------
   lint:
     name: Lint (fmt + clippy)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Install libudev-dev and pkg-config
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
@@ -71,26 +73,28 @@ jobs:
   test:
     name: Test (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         runner:
-          - ubuntu-latest      # Linux x86_64
-          - ubuntu-24.04-arm   # Linux ARM64
-          - macos-latest       # macOS ARM64
-          - macos-26-intel     # macOS x86_64 — same runner release.yml ships on
-          - windows-latest     # Windows x86_64
+          - ubuntu-26.04       # Linux x86_64
+          - ubuntu-26.04-arm   # Linux ARM64
+          - macos-26           # macOS ARM64
+          - macos-26-intel     # macOS x86_64
+          - windows-2025       # Windows x86_64
           - windows-11-arm     # Windows ARM64
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Install libudev-dev and pkg-config
         if: runner.os == 'Linux'
