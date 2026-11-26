@@ -70,19 +70,21 @@ jobs:
   # Test - build + test across the supported OS/arch matrix
   # ---------------------------------------------------------------------------
   test:
-    name: Test (${{ matrix.runner }})
+    name: Test (${{ matrix.platform }})
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        runner:
-          - ubuntu-26.04       # Linux x86_64
-          - ubuntu-26.04-arm   # Linux ARM64
-          - macos-26           # macOS ARM64
-          - macos-26-intel     # macOS x86_64
-          - windows-2025       # Windows x86_64
-          - windows-11-arm     # Windows ARM64
+        # Check names use the platform label so required status checks keep
+        # working when runner images are bumped.
+        include:
+          - { platform: linux-x64, runner: ubuntu-26.04 }
+          - { platform: linux-arm64, runner: ubuntu-26.04-arm }
+          - { platform: macos-arm64, runner: macos-26 }
+          - { platform: macos-x64, runner: macos-26-intel }
+          - { platform: windows-x64, runner: windows-2025 }
+          - { platform: windows-arm64, runner: windows-11-arm }
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -119,7 +121,7 @@ jobs:
             esac
           }
           {
-            echo "## Test Results (${{ matrix.runner }})"
+            echo "## Test Results (${{ matrix.platform }})"
             echo "| Step | Status |"
             echo "|------|--------|"
             echo "| build | $(status ${{ steps.build.outcome }}) |"
