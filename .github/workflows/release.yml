@@ -4,23 +4,91 @@ on:
   push:
     tags:
       - 'v*'
+  # Dry-run: build and package on PRs that touch the release inputs; only a
+  # tag push reaches the publish job.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
+      - "src/dapjs/LICENSE"
 
 permissions:
   contents: read
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Validate - the tag must match Cargo.toml, point into main history, and the
+  # production environment must still require approval for v* tags.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Validate tag and release policy
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      label: ${{ steps.version.outputs.label }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the tag matches Cargo.toml and main
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          version=$(sed -nE '/^\[package\]/,/^\[/{s/^version[[:blank:]]*=[[:blank:]]*"([^"]+)".*/\1/p}' Cargo.toml | head -n1)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Cargo.toml package version '$version' is not MAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" != "push" ]]; then
+            echo "label=v${version}-dryrun" >> "$GITHUB_OUTPUT"
+            echo "Dry run for v${version}"
+            exit 0
+          fi
+          if [[ "$GITHUB_REF_NAME" != "v$version" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match Cargo.toml version v$version"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD refs/remotes/origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME must point to a commit in main history"
+            exit 1
+          fi
+          echo "label=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Verify production requires approval and allows only v* tags
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          endpoint="repos/$GITHUB_REPOSITORY/environments/production"
+          gh api "$endpoint" | jq -e '
+            .deployment_branch_policy.custom_branch_policies and
+            any(.protection_rules[]; .type == "required_reviewers" and (.reviewers | length > 0))
+          ' > /dev/null || { echo "::error::production must require a reviewer and use custom deployment policies"; exit 1; }
+          gh api "$endpoint/deployment-branch-policies" | jq -e '
+            any(.branch_policies[]; .name == "v*" and .type == "tag")
+          ' > /dev/null || { echo "::error::production must allow the v* tag deployment policy"; exit 1; }
+
+  # ---------------------------------------------------------------------------
   # Check - gate the release on fmt + clippy + tests before building artifacts
   # ---------------------------------------------------------------------------
   check:
     name: Check (fmt + clippy + test)
+    needs: validate
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -53,7 +121,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build:
     name: Build (${{ matrix.target }})
-    needs: check
+    needs: [validate, check]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -96,31 +164,40 @@ jobs:
       - name: Package (Linux, tar.gz)
         if: runner.os == 'Linux'
         shell: bash
+        env:
+          RELEASE_LABEL: ${{ needs.validate.outputs.label }}
         run: |
-          stage="freeocd-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir "$stage"
+          stage="freeocd-${RELEASE_LABEL}-${{ matrix.target }}"
+          mkdir -p "$stage/licenses"
           cp "target/${{ matrix.target }}/release/freeocd" "$stage/"
           cp LICENSE README.md "$stage/"
+          cp src/dapjs/LICENSE "$stage/licenses/DAPjs-LICENSE.txt"
           tar -czf "${stage}.tar.gz" "$stage"
 
       - name: Package (macOS, zip)
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          RELEASE_LABEL: ${{ needs.validate.outputs.label }}
         run: |
-          stage="freeocd-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir "$stage"
+          stage="freeocd-${RELEASE_LABEL}-${{ matrix.target }}"
+          mkdir -p "$stage/licenses"
           cp "target/${{ matrix.target }}/release/freeocd" "$stage/"
           cp LICENSE README.md "$stage/"
+          cp src/dapjs/LICENSE "$stage/licenses/DAPjs-LICENSE.txt"
           zip -r -X -9 "${stage}.zip" "$stage"
 
       - name: Package (Windows, zip)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          RELEASE_LABEL: ${{ needs.validate.outputs.label }}
         run: |
-          $stage = "freeocd-$env:GITHUB_REF_NAME-${{ matrix.target }}"
-          New-Item -ItemType Directory -Path $stage | Out-Null
+          $stage = "freeocd-$env:RELEASE_LABEL-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path "$stage/licenses" | Out-Null
           Copy-Item "target/${{ matrix.target }}/release/freeocd.exe" -Destination $stage
           Copy-Item LICENSE, README.md -Destination $stage
+          Copy-Item src/dapjs/LICENSE -Destination "$stage/licenses/DAPjs-LICENSE.txt"
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
 
       - name: Verify archive
@@ -164,11 +241,14 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     environment: production
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - name: Download release artifacts
@@ -176,6 +256,7 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+          digest-mismatch: error
 
       - name: Generate checksums
         working-directory: dist
@@ -186,7 +267,15 @@ jobs:
       - name: List release files
         run: ls -la dist
 
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/freeocd-*.tar.gz
+            dist/freeocd-*.zip
+
       - name: Create GitHub Release
+        id: github-release
         uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         # zizmor: ignore[superfluous-actions] keeps gh-release for generated notes + file upload UX
         with:
@@ -197,12 +286,15 @@ jobs:
             dist/checksums-sha256.txt
 
       - name: Release summary
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           RELEASE_NAME: ${{ github.ref_name }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.github-release.outcome }}
         run: |
           {
             echo "## Release ${RELEASE_NAME}"
+            echo ""
+            echo "GitHub Release: ${GITHUB_RELEASE_OUTCOME:-skipped}"
             echo ""
             echo "### SHA-256 Checksums"
             echo '```'
