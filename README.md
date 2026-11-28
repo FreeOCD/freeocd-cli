@@ -242,6 +242,19 @@ build.rs              # Copies freeocd-web target JSON into OUT_DIR for embeddin
 vendor/freeocd-web/   # Shared web project (git submodule; source of target JSON)
 ```
 
+## Releasing
+
+Update the Cargo package version through a normal PR and confirm CI on the
+merged `main` commit. Push an unsigned tag that matches the package version,
+such as `vX.Y.Z` or `vX.Y.Z-rc.1`. After `production` approval, the workflow
+publishes the GitHub Release with checksums and build provenance. A SemVer
+prerelease is not marked Latest.
+
+If publication left an unpublished draft for the tag, delete the draft even
+if it contains partial assets, keep the tag, and use **Re-run failed jobs**.
+If the Release is already published, do not change it or rerun publication.
+Verify the assets and checksums and release a new patch version if needed.
+
 ## License
 
 This project is licensed under the BSD 3-Clause License — see [LICENSE](LICENSE).
