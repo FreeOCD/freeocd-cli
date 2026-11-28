@@ -21,18 +21,18 @@ jobs:
   # ---------------------------------------------------------------------------
   check:
     name: Check (fmt + clippy + test)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           components: rustfmt, clippy
-
-      - uses: Swatinem/rust-cache@v2
 
       - name: Install libudev-dev and pkg-config
         run: sudo apt-get update && sudo apt-get install -y libudev-dev pkg-config
@@ -55,34 +55,36 @@ jobs:
     name: Build (${{ matrix.target }})
     needs: check
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
+        # Release artifacts are built on the oldest supported runner images so
+        # the binaries keep running there (glibc / macOS floor).
         include:
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - runner: macos-latest
+          - runner: macos-15
             target: aarch64-apple-darwin
-          - runner: macos-26-intel
+          - runner: macos-15-intel
             target: x86_64-apple-darwin
-          - runner: windows-latest
+          - runner: windows-2025
             target: x86_64-pc-windows-msvc
           - runner: windows-11-arm
             target: aarch64-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
         with:
           targets: ${{ matrix.target }}
-
-      - uses: Swatinem/rust-cache@v2
 
       - name: Install libudev-dev and pkg-config
         if: runner.os == 'Linux'
@@ -147,7 +149,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload release artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: freeocd-${{ matrix.target }}
           path: |
@@ -162,14 +164,15 @@ jobs:
   publish:
     name: Publish GitHub Release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
     environment: production
     permissions:
       contents: write
 
     steps:
       - name: Download release artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
@@ -184,7 +187,8 @@ jobs:
         run: ls -la dist
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
+        # zizmor: ignore[superfluous-actions] keeps gh-release for generated notes + file upload UX
         with:
           generate_release_notes: true
           files: |
@@ -194,10 +198,14 @@ jobs:
 
       - name: Release summary
         if: always()
+        env:
+          RELEASE_NAME: ${{ github.ref_name }}
         run: |
-          echo "## Release ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "### SHA-256 Checksums" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          cat dist/checksums-sha256.txt >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## Release ${RELEASE_NAME}"
+            echo ""
+            echo "### SHA-256 Checksums"
+            echo '```'
+            cat dist/checksums-sha256.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
