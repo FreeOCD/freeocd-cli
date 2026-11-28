@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release.yml"
+      - ".github/scripts/*.sh"
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.rs"
@@ -16,8 +17,7 @@ on:
       - "README.md"
       - "src/dapjs/LICENSE"
 
-permissions:
-  contents: read
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
@@ -40,6 +40,7 @@ jobs:
       contents: read
     outputs:
       label: ${{ steps.version.outputs.label }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -52,10 +53,8 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
         run: |
           version=$(sed -nE '/^\[package\]/,/^\[/{s/^version[[:blank:]]*=[[:blank:]]*"([^"]+)".*/\1/p}' Cargo.toml | head -n1)
-          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::Cargo.toml package version '$version' is not MAJOR.MINOR.PATCH"
-            exit 1
-          fi
+          bash .github/scripts/publish_release.sh --check-version "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           if [[ "$EVENT_NAME" != "push" ]]; then
             echo "label=v${version}-dryrun" >> "$GITHUB_OUTPUT"
             echo "Dry run for v${version}"
@@ -75,15 +74,7 @@ jobs:
         if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          endpoint="repos/$GITHUB_REPOSITORY/environments/production"
-          gh api "$endpoint" | jq -e '
-            .deployment_branch_policy.custom_branch_policies and
-            any(.protection_rules[]; .type == "required_reviewers" and (.reviewers | length > 0))
-          ' > /dev/null || { echo "::error::production must require a reviewer and use custom deployment policies"; exit 1; }
-          gh api "$endpoint/deployment-branch-policies" | jq -e '
-            any(.branch_policies[]; .name == "v*" and .type == "tag")
-          ' > /dev/null || { echo "::error::production must allow the v* tag deployment policy"; exit 1; }
+        run: bash .github/scripts/validate_release.sh
 
   # ---------------------------------------------------------------------------
   # Check - gate the release on fmt + clippy + tests before building artifacts
@@ -93,6 +84,8 @@ jobs:
     needs: validate
     runs-on: ubuntu-26.04
     timeout-minutes: 30
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -126,6 +119,8 @@ jobs:
     needs: [validate, check]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -205,6 +200,7 @@ jobs:
       - name: Smoke-test archive
         shell: bash
         env:
+          VERSION: ${{ needs.validate.outputs.version }}
           RELEASE_LABEL: ${{ needs.validate.outputs.label }}
           TARGET: ${{ matrix.target }}
         run: |
@@ -226,11 +222,9 @@ jobs:
               exit 1
             fi
           done
-          version="${RELEASE_LABEL#v}"
-          version="${version%-dryrun}"
           actual=$("$dir/$exe" --version)
-          if [ "$actual" != "freeocd $version" ]; then
-            echo "::error::$exe --version printed '$actual', expected 'freeocd $version'"
+          if [ "$actual" != "freeocd $VERSION" ]; then
+            echo "::error::$exe --version printed '$actual', expected 'freeocd $VERSION'"
             exit 1
           fi
           "$dir/$exe" list | tee smoke/list.txt
@@ -293,11 +287,16 @@ jobs:
     timeout-minutes: 15
     environment: production
     permissions:
+      actions: read
       contents: write
       id-token: write
       attestations: write
 
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download release artifacts
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -314,6 +313,11 @@ jobs:
       - name: List release files
         run: ls -la dist
 
+      - name: Recheck production policy and Release availability
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/validate_release.sh --publish-check
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -323,14 +327,9 @@ jobs:
 
       - name: Create GitHub Release
         id: github-release
-        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
-        # zizmor: ignore[superfluous-actions] keeps gh-release for generated notes + file upload UX
-        with:
-          generate_release_notes: true
-          files: |
-            dist/freeocd-*.tar.gz
-            dist/freeocd-*.zip
-            dist/checksums-sha256.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/publish_release.sh dist/freeocd-*.tar.gz dist/freeocd-*.zip dist/checksums-sha256.txt
 
       - name: Release summary
         if: ${{ !cancelled() }}
